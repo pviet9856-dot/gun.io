@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Florr.io Clone - Full Wave</title>
+<style>
+body{margin:0;overflow:hidden;background:#111;font-family:sans-serif;}
+canvas{display:block;margin:0 auto;background:#222;}
+#hud{position:absolute;top:10px;left:10px;color:white;font-size:16px;background:rgba(0,0,0,0.5);padding:5px 10px;border-radius:8px;}
+#skills{position:absolute;top:80px;left:10px;color:white;font-size:14px;background:rgba(0,0,0,0.5);padding:5px 10px;border-radius:8px;}
+button{margin:2px;}
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<div id="hud"></div>
+<div id="skills">
+<div>Skill Points: <span id="skillPoints">0</span></div>
+<button onclick="upgrade('damage')">+Damage</button>
+<button onclick="upgrade('hp')">+HP</button>
+<button onclick="upgrade('speed')">+Speed</button>
+<button onclick="upgrade('cooldown')">-Cooldown</button>
+<button onclick="upgrade('gun')">Gun Upgrade</button>
+</div>
+<script>
+const canvas=document.getElementById("gameCanvas");
+const ctx=canvas.getContext("2d");
+canvas.width=window.innerWidth;
+canvas.height=window.innerHeight;
+
+let mouseX=canvas.width/2, mouseY=canvas.height/2;
+document.addEventListener('mousemove',e=>{mouseX=e.clientX; mouseY=e.clientY;});
+
+let keys={};
+document.addEventListener('keydown',e=>keys[e.key.toLowerCase()]=true);
+document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+let player={
+  x:canvas.width/2,y:canvas.height/2,radius:25,speed:6,hp:25000,maxHp:25000,bulletDamage:5000,
+  laserCooldown:0,lightningCooldown:0,qCooldown:0,rCooldown:0,cooldownReduction:0,gunLevel:1,
+  skillMax:100
+};
+
+let skillPoints=0;
+let exp=0, level=1;
+
+let bullets=[];
+let particles=[];
+let enemies=[];
+let boss=null;
+let wave=0;
+let respawnTimer=null;
+let killedThisWave=0;
+
+let rAngle=0,rTimer=0;
+
+// Spawn wave
+function spawnWave(){
+  wave++;
+  enemies=[];
+  for(let i=0;i<50;i++){
+    enemies.push({
+      x:Math.random()*canvas.width,
+      y:Math.random()*canvas.height/2,
+      radius:20,
+      hp:10000,
+      maxHp:10000,
+      speed:2 + Math.random()*2,
+      bulletCooldown:Math.floor(Math.random()*100)
+    });
+  }
+  if(wave%10===0){ boss={x:canvas.width/2,y:50,radius:50,hp:50000}; } else boss=null;
+  killedThisWave=0;
+}
+
+// Bullet shoot
+document.addEventListener('mousedown',shootBullet);
+function shootBullet(){
+  for(let g=0; g<player.gunLevel; g++){
+    let offset=(g-(player.gunLevel-1)/2)*0.1;
+    let dx=mouseX-player.x, dy=mouseY-player.y;
+    let angle=Math.atan2(dy,dx)+offset;
+    bullets.push({x:player.x,y:player.y,dx:Math.cos(angle)*12,dy:Math.sin(angle)*12,damage:player.bulletDamage});
+  }
+}
+
+// Skills
+document.addEventListener('keydown', e=>{
+  if(e.key.toLowerCase()==='t' && player.laserCooldown<=0){ shootLaser(); player.laserCooldown=300-player.cooldownReduction; if(player.laserCooldown<5) player.laserCooldown=5;}
+});
+document.addEventListener('keydown', e=>{
+  if(e.key.toLowerCase()==='e' && player.lightningCooldown<=0){ shootLightning(); player.lightningCooldown=30-player.cooldownReduction; if(player.lightningCooldown<1) player.lightningCooldown=1;}
+});
+document.addEventListener('keydown', e=>{
+  if(e.key.toLowerCase()==='q' && player.qCooldown<=0){ shootQ(); player.qCooldown=90-player.cooldownReduction; if(player.qCooldown<1) player.qCooldown=1;}
+});
+document.addEventListener('keydown', e=>{
+  if(e.key.toLowerCase()==='r' && player.rCooldown<=0){ shootR(); player.rCooldown=30-player.cooldownReduction; if(player.rCooldown<1) player.rCooldown=1;}
+});
+
+// Skill functions
+function shootLaser(){
+  particles.push({x:player.x,y:player.y,dx:(mouseX-player.x)/20,dy:(mouseY-player.y)/20,life:20,color:"red",radius:8});
+  enemies.forEach(e=>{if(isLineHittingCircle(player.x,player.y,mouseX,mouseY,e)){e.hp-=1000000000; checkEnemyKill(e);}});
+  if(boss && isLineHittingCircle(player.x,player.y,mouseX,mouseY,boss)){ boss.hp-=1000000000; if(boss.hp<=0) boss=null; }
+}
+
+function shootLightning(){
+  for(let i=0;i<3;i++){
+    let e=enemies[i]; if(!e) continue; e.hp-=100000; checkEnemyKill(e);
+    particles.push({x:Math.random()*canvas.width,y:0,dx:(e.x-Math.random()*canvas.width)/30,dy:(e.y-0)/30,life:15,color:"cyan",radius:5});
+  }
+}
+
+function shootQ(){
+  for(let i=0;i<100;i++){
+    let e=enemies[Math.floor(Math.random()*enemies.length)];
+    if(e){ e.hp-=1000000; checkEnemyKill(e); }
+    particles.push({x:Math.random()*canvas.width,y:0,dx:(e?e.x:canvas.width/2-Math.random()*canvas.width)/30,dy:(e?e.y:canvas.height/2-0)/30,life:20,color:"gold",radius:4});
+  }
+}
+
+function shootR(){
+  // 100 swords
+  for(let i=0;i<100;i++){
+    let angle=rAngle + i*(Math.PI*2/100);
+    let dx=Math.cos(angle)*20, dy=Math.sin(angle)*20;
+    bullets.push({x:player.x+dx,y:player.y+dy,dx:Math.cos(angle)*25,dy:Math.sin(angle)*25,damage:100000000,fromR:true});
+    particles.push({x:player.x+dx,y:player.y+dy,dx:Math.cos(angle)*10,dy:Math.sin(angle)*10,life:10,color:"white",radius:5});
+  }
+  rAngle+=0.05;
+}
+
+// Enemy kill check
+function checkEnemyKill(e){
+  if(e.hp<=0){
+    let index=enemies.indexOf(e); if(index>-1) enemies.splice(index,1);
+    killedThisWave++;
+    if(killedThisWave%25===0){ skillPoints++; document.getElementById('skillPoints').innerText=skillPoints; }
+  }
+}
+
+// Line collision
+function isLineHittingCircle(x1,y1,x2,y2,circle){
+  let A=x2-x1,B=y2-y1,C=circle.x-x1,D=circle.y-y1;
+  let dot=A*C+B*D,len_sq=A*A+B*B,param=dot/len_sq;
+  let xx,yy;
+  if(param<0){xx=x1;yy=y1;} else if(param>1){xx=x2;yy=y2;} else {xx=x1+param*A;yy=y1+param*B;}
+  let dx=circle.x-xx,dy=circle.y-yy;
+  return dx*dx+dy*dy<circle.radius*circle.radius;
+}
+
+// EXP
+function gainExp(amount){
+  exp+=amount; let required=level*1000; 
+  if(exp>=required){ exp-=required; level++; skillPoints++; document.getElementById('skillPoints').innerText=skillPoints; }
+}
+
+// Upgrade
+function upgrade(type){
+  if(skillPoints<=0) return;
+  skillPoints--;
+  if(type==='damage') player.bulletDamage+=1000;
+  else if(type==='hp'){player.maxHp+=5000;player.hp+=5000;}
+  else if(type==='speed') player.speed+=0.5;
+  else if(type==='cooldown') player.cooldownReduction+=5;
+  else if(type==='gun' && player.gunLevel<player.skillMax) player.gunLevel++;
+  document.getElementById('skillPoints').innerText=skillPoints;
+}
+
+// Game loop
+function loop(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // Move player
+  if(keys['w'] && player.y>0) player.y-=player.speed;
+  if(keys['s'] && player.y<canvas.height) player.y+=player.speed;
+  if(keys['a'] && player.x>0) player.x-=player.speed;
+  if(keys['d'] && player.x<canvas.width) player.x+=player.speed;
+
+  // Draw player
+  ctx.save(); ctx.shadowBlur=15; ctx.shadowColor="lime"; ctx.fillStyle="lime"; ctx.beginPath(); ctx.arc(player.x,player.y,player.radius,0,Math.PI*2); ctx.fill(); ctx.restore();
+  ctx.fillStyle="red"; ctx.fillRect(player.x-25,player.y-35,50,5);
+  ctx.fillStyle="lime"; ctx.fillRect(player.x-25,player.y-35,50*(player.hp/player.maxHp),5);
+
+  // Bullets
+  bullets.forEach((b,i)=>{
+    b.x+=b.dx;b.y+=b.dy;
+    ctx.save(); ctx.shadowBlur=10; ctx.shadowColor=b.fromR?"white":"yellow"; ctx.fillStyle=b.fromR?"white":"yellow"; ctx.beginPath(); ctx.arc(b.x,b.y,6,0,Math.PI*2); ctx.fill(); ctx.restore();
+    enemies.forEach((e,ei)=>{let dx=b.x-e.x,dy=b.y-e.y;if(dx*dx+dy*dy<(6+e.radius)*(6+e.radius)){ e.hp-=b.damage; gainExp(10); checkEnemyKill(e); bullets.splice(i,1);}});
+    if(boss){ let dx=b.x-boss.x,dy=b.y-boss.y;if(dx*dx+dy*dy<(6+boss.radius)*(6+boss.radius)){ boss.hp-=b.damage; if(boss.hp<=0) boss=null; bullets.splice(i,1);}}
+  });
+
+  // Enemies
+  enemies.forEach((e,i)=>{
+    if(e.hp<=0){ enemies.splice(i,1); return; }
+    ctx.save(); ctx.shadowBlur=10; ctx.shadowColor="red"; ctx.fillStyle="red"; ctx.beginPath(); ctx.arc(e.x,e.y,e.radius,0,Math.PI*2); ctx.fill(); ctx.restore();
+    ctx.fillStyle="black"; ctx.fillRect(e.x-20,e.y-30,40,4);
+    ctx.fillStyle="red"; ctx.fillRect(e.x-20,e.y-30,40*(e.hp/e.maxHp),4);
+    let dx=player.x-e.x, dy=player.y-e.y, dist=Math.hypot(dx,dy);
+    e.x+=dx/dist*2; e.y+=dy/dist*2;
+    e.bulletCooldown--; if(e.bulletCooldown<=0){ e.bulletCooldown=Math.floor(Math.random()*100+50); player.hp-=10; }
+  });
+
+  // Boss
+  if(boss){
+    ctx.save(); ctx.shadowBlur=25; ctx.shadowColor="purple"; ctx.fillStyle="purple"; ctx.beginPath(); ctx.arc(boss.x,boss.y,boss.radius,0,Math.PI*2); ctx.fill(); ctx.restore();
+    ctx.fillStyle="black"; ctx.fillRect(boss.x-50,boss.y-60,100,8);
+    ctx.fillStyle="red"; ctx.fillRect(boss.x-50,boss.y-60,100*(boss.hp/50000),8);
+  }
+
+  // Particles
+  particles.forEach((p,i)=>{
+    p.x+=p.dx;p.y+=p.dy;p.life--; if(p.life<=0) particles.splice(i,1);
+    else { ctx.save(); ctx.shadowBlur=10; ctx.shadowColor=p.color; ctx.fillStyle=p.color; ctx.globalAlpha=p.life/20; ctx.beginPath(); ctx.arc(p.x,p.y,p.radius,0,Math.PI*2); ctx.fill(); ctx.restore();}
+  });
+
+  // Cooldowns
+  if(player.laserCooldown>0) player.laserCooldown--;
+  if(player.lightningCooldown>0) player.lightningCooldown--;
+  if(player.qCooldown>0) player.qCooldown--;
+  if(player.rCooldown>0) player.rCooldown--;
+
+  // Respawn wave
+  if(enemies.length===0 && !boss && !respawnTimer){ respawnTimer=setTimeout(()=>{spawnWave(); respawnTimer=null;},5000); }
+
+  // Rotate R angle
+  rAngle+=0.05;
+
+  // HUD
+  document.getElementById('hud').innerHTML=
+  `HP: ${player.hp}/${player.maxHp} | Level: ${level} | EXP: ${exp}/${level*1000} | Skill Points: ${skillPoints} | Gun Level: ${player.gunLevel} | Enemies: ${enemies.length} | Boss: ${boss?boss.hp:"N/A"} | Laser T CD: ${Math.ceil(player.laserCooldown/30)}s | Lightning E CD: ${Math.ceil(player.lightningCooldown/30)}s | Q CD: ${Math.ceil(player.qCooldown/30/1)}s | R CD: ${Math.ceil(player.rCooldown/30)}s`;
+
+  requestAnimationFrame(loop);
+}
+
+spawnWave();
+loop();
+</script>
+</body>
+</html>
+
+
